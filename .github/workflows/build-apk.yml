@@ -1,0 +1,69 @@
+name: Construire l'APK Android
+
+on:
+  workflow_dispatch:
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Préparer la configuration
+        run: |
+          if [ ! -f .env.production ]; then cp env.production .env.production; fi
+          if grep -q "REMPLACE-MOI" .env.production; then
+            echo "::error::Ouvrez le fichier env.production sur GitHub et remplacez les deux REMPLACE-MOI par les valeurs de Supabase."
+            exit 1
+          fi
+
+      - name: Installer ImageMagick
+        run: sudo apt-get update && sudo apt-get install -y imagemagick
+
+      - name: Construire le site
+        run: |
+          npm install --legacy-peer-deps
+          npm run build
+
+      - name: Installer Capacitor
+        working-directory: mobile
+        run: npm install
+
+      - name: Créer le projet Android
+        working-directory: mobile
+        run: npx cap add android
+
+      - name: Autoriser l'appareil photo
+        working-directory: mobile
+        run: |
+          M=android/app/src/main/AndroidManifest.xml
+          sed -i 's#</manifest>#    <uses-permission android:name="android.permission.CAMERA" />\n    <uses-feature android:name="android.hardware.camera" android:required="false" />\n</manifest>#' "$M"
+          grep -n "CAMERA" "$M"
+
+      - name: Générer les icônes
+        working-directory: mobile
+        run: |
+          rm -f android/app/src/main/res/mipmap-*/ic_launcher*.webp android/app/src/main/res/mipmap-*/ic_launcher*.png
+          ./scripts/make-icons.sh
+
+      - name: Synchroniser
+        working-directory: mobile
+        run: npx cap sync android
+
+      - name: Compiler l'APK
+        working-directory: mobile/android
+        run: ./gradlew assembleDebug
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UNTRTCI-Mobile-apk
+          path: mobile/android/app/build/outputs/apk/debug/app-debug.apk
